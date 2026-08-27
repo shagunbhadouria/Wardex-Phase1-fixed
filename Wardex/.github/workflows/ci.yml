@@ -1,0 +1,103 @@
+name: SentinelAI CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  stage-1-test-and-quality-gate:
+    name: "Stage 1: Quality Gate & Tests"
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sentinelai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sentinelai_test
+      REDIS_URL: redis://localhost:6379/0
+      GROQ_API_KEY: mock_key_for_testing
+      ENVIRONMENT: test
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run Flake8 Linter
+        run: flake8 app --max-line-length=88 --extend-ignore=E203,W503
+
+      - name: Run Isort Import Check
+        run: isort --check-only app
+
+      - name: Run Mypy Type Checking
+        run: mypy app
+
+      - name: Run Tests with Coverage
+        run: pytest app/ --cov=app --cov-report=term-missing
+
+      - name: Secret Scan (detect-secrets)
+        run: |
+          if [ -f .secrets.baseline ]; then
+            detect-secrets audit .secrets.baseline
+          else
+            echo "No .secrets.baseline found, skipping audit."
+          fi
+
+  stage-2-build-and-push:
+    name: "Stage 2: Build & Tag Container"
+    needs: stage-1-test-and-quality-gate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        run: |
+          docker build --target production -t sentinelai-api:${{ github.sha }} .
+
+  stage-3-deploy:
+    name: "Stage 3: Automated Deploy"
+    needs: stage-2-build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render Deploy Hook
+        run: |
+          echo "Triggering automated deploy to Render..."
