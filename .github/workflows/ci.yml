@@ -70,11 +70,8 @@ jobs:
 
       - name: Secret Scan (detect-secrets)
         run: |
-          if [ -f .secrets.baseline ]; then
-            detect-secrets audit .secrets.baseline
-          else
-            echo "No .secrets.baseline found, skipping audit."
-          fi
+          pip install detect-secrets
+          detect-secrets scan --baseline .secrets.baseline
 
   stage-2-build-and-push:
     name: "Stage 2: Build & Tag Container"
@@ -84,9 +81,6 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: actions/setup-buildx-action@v3
 
       - name: Build Docker Image
         run: |
@@ -98,6 +92,14 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Render Deploy Hook
+            # TECH DEBT: DEPLOY-001 — no Render service exists yet, so there
+      # is no real webhook URL to call. This step intentionally fails
+      # rather than fake a successful deploy, per R-07 (stubs must
+      # fail loudly). Replace with a real
+      # `curl -X POST $RENDER_DEPLOY_HOOK_URL` once a Render service
+      # is provisioned and the hook URL is stored as a GitHub Actions
+      # secret.
+      - name: Deploy hook not configured
         run: |
-          echo "Triggering automated deploy to Render..."
+          echo "::error::No Render deploy hook configured yet. This stage is a placeholder — see TECH DEBT: DEPLOY-001."
+          exit 1
