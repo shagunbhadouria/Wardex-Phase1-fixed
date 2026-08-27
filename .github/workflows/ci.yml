@@ -86,6 +86,47 @@ jobs:
         run: |
           docker build --target production -t sentinelai-api:${{ github.sha }} .
 
+      - name: Smoke Test - Boot Container and Check Health
+        run: |
+          docker run -d --name smoke-test \
+            -e ENVIRONMENT=development \
+            -e DATABASE_URL=postgresql://postgres:postgres@localhost:5432/sentinelai \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            -p 8000:8000 \
+            sentinelai-api:${{ github.sha }}
+
+          echo "Waiting for container to become healthy..."
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8000/health > /tmp/health.json; then
+              echo "Container responded on attempt $i"
+              break
+            fi
+            if [ "$i" -eq 15 ]; then
+              echo "::error::Container never became healthy after 15 attempts"
+              docker logs smoke-test
+              exit 1
+            fi
+            sleep 2
+          done
+
+          cat /tmp/health.json
+          echo ""
+
+          if ! grep -q '"success":true' /tmp/health.json; then
+            echo "::error::/health did not return success:true"
+            docker logs smoke-test
+            exit 1
+          fi
+
+          echo "Health check passed."
+
+      - name: Smoke Test Cleanup
+        if: always()
+        run: |
+          docker logs smoke-test || true
+          docker stop smoke-test || true
+          docker rm smoke-test || true
+
   stage-3-deploy:
     name: "Stage 3: Automated Deploy"
     needs: stage-2-build-and-push
